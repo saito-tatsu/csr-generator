@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RSA / EC Key & CSR Generator</title>
+
+  <style>
+    :root {
+      --bg: #0a0c0f;
+      --surface: #111318;
+      --border: #1e2330;
+      --accent: #00e5ff;
+      --accent2: #7c3aed;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --success: #10b981;
+
+      /* System font stacks (no external requests) */
+      --sans: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP",
+              "Meiryo", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+              "Liberation Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 80px;
+    }
+
+    /* Background grid */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 860px;
+      position: relative;
+      z-index: 1;
+    }
+
+    header {
+      margin-bottom: 48px;
+      text-align: center;
+    }
+
+    .badge {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      color: var(--accent);
+      border: 1px solid rgba(0,229,255,0.3);
+      padding: 4px 12px;
+      border-radius: 2px;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #fff 40%, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted);
+      opacity: 0.9;
+    }
+
+    /* Steps */
+    .steps {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 32px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .step {
+      flex: 1;
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      cursor: default;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0,229,255,0.05);
+    }
+
+    .step.done {
+      border-color: var(--success);
+      color: var(--success);
+      background: rgba(16,185,129,0.05);
+    }
+
+    .step-num {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid currentColor;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 32px;
+      margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      opacity: 0.6;
+    }
+
+    .card-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Form */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group.full { grid-column: 1 / -1; }
+
+    label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    input, select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      border-radius: 0;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,229,255,0.08);
+    }
+
+    input::placeholder { color: #64748b; }
+
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 36px;
+    }
+
+    /* Key size toggle */
+    .key-toggle { display: flex; gap: 0; }
+    .key-toggle input[type="radio"] { display: none; }
+
+    .key-toggle label {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: var(--mono);
+      font-size: 13px;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--muted);
+      user-select: none;
+    }
+    .key-toggle label:first-of-type { border-right: none; }
+
+    .key-toggle input:checked + label {
+      background: rgba(0,229,255,0.1);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Button */
+    .btn {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 14px 32px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+      width: 100%;
+      justify-content: center;
+      margin-top: 24px;
+    }
+
+    .btn-primary:hover { background: #33ecff; }
+
+    .btn-primary:disabled {
+      background: #475569;
+      cursor: not-allowed;
+    }
+
+    .btn-primary.loading::after {
+      content: "";
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(0,0,0,0.3);
+      border-top-color: #000;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    .btn-copy, .btn-download {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 12px;
+      font-size: 11px;
+    }
+
+    .btn-copy:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-copy.copied { border-color: var(--success); color: var(--success); }
+    .btn-download:hover { border-color: var(--accent2); color: #a78bfa; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Output section */
+    .output-section { display: none; }
+    .output-section.visible { display: block; }
+
+    .output-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 20px;
+      margin-bottom: 16px;
+      position: relative;
+    }
+
+    .output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .output-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .output-actions { display: flex; gap: 8px; }
+
+    textarea.output-text {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: #cbd5e1;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      resize: none;
+      outline: none;
+      height: 180px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    /* Warning */
+    .warning {
+      background: rgba(245,158,11,0.06);
+      border: 1px solid rgba(245,158,11,0.2);
+      padding: 12px 16px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: #fbbf24;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 20px;
+      line-height: 1.6;
+    }
+
+    .warning-icon { flex-shrink: 0; font-size: 14px; }
+
+    /* Subject info display */
+    .subject-display {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      background: rgba(124,58,237,0.05);
+      border: 1px solid rgba(124,58,237,0.2);
+      padding: 10px 14px;
+      margin-top: 12px;
+      line-height: 1.8;
+      word-break: break-all;
+    }
+
+    .subject-display span { color: #a78bfa; }
+
+    /* Progress indicator */
+    .progress-bar {
+      height: 2px;
+      background: var(--border);
+      margin-bottom: 32px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    @media (max-width: 600px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .form-group.full { grid-column: 1; }
+      .steps { flex-direction: column; gap: 4px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">// crypto tooling</div>
+      <h1>RSA / EC Key &<br />CSR Generator</h1>
+      <p class="subtitle">Web Crypto API — ブラウザ内処理 / キーは外部に送信されません</p>
+    </header>
+
+    <!-- Steps -->
+    <div class="steps">
+      <div class="step active" id="step1">
+        <div class="step-num">1</div>
+        <span>パラメータ設定</span>
+      </div>
+      <div class="step" id="step2">
+        <div class="step-num">2</div>
+        <span>鍵生成</span>
+      </div>
+      <div class="step" id="step3">
+        <div class="step-num">3</div>
+        <span>結果取得</span>
+      </div>
+    </div>
+
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <!-- Config Card -->
+    <div class="card">
+      <div class="card-title">01 — 鍵の設定</div>
+
+      <div class="form-group" style="margin-bottom:20px;">
+        <label>鍵タイプ (Key Type)</label>
+        <div class="key-toggle">
+          <input type="radio" name="keyType" id="typeRSA" value="RSA" checked onchange="onKeyTypeChange()" />
+          <label for="typeRSA">RSA</label>
+          <input type="radio" name="keyType" id="typeEC" value="EC" onchange="onKeyTypeChange()" />
+          <label for="typeEC">EC (楕円曲線)</label>
+        </div>
+      </div>
+
+      <!-- RSA options -->
+      <div id="rsaOptions" class="form-group" style="margin-bottom:20px;">
+        <label>鍵長 (Key Size)</label>
+        <div class="key-toggle">
+          <input type="radio" name="keySize" id="key2048" value="2048" checked />
+          <label for="key2048">2048 bit</label>
+          <input type="radio" name="keySize" id="key4096" value="4096" />
+          <label for="key4096">4096 bit</label>
+        </div>
+      </div>
+
+      <!-- EC options -->
+      <div id="ecOptions" class="form-group" style="margin-bottom:20px; display:none;">
+        <label>曲線 (Curve)</label>
+        <div class="key-toggle" style="flex-direction:row;">
+          <input type="radio" name="ecCurve" id="curveP256" value="P-256" checked />
+          <label for="curveP256" style="border-right:none;">P-256</label>
+          <input type="radio" name="ecCurve" id="curveP384" value="P-384" />
+          <label for="curveP384" style="border-right:none;">P-384</label>
+          <input type="radio" name="ecCurve" id="curveP521" value="P-521" />
+          <label for="curveP521">P-521</label>
+        </div>
+
+        <div style="font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:8px; line-height:1.7;"
+             id="curveDesc">
+          P-256 — secp256r1 / 一般用途・TLS広く採用
+        </div>
+      </div>
+    </div>
+
+    <!-- CSR Card -->
+    <div class="card">
+      <div class="card-title">02 — Subject 情報 (CSR)</div>
+
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Common Name (CN) *</label>
+          <input type="text" id="cn" placeholder="example.com" required />
+        </div>
+
+        <div class="form-group">
+          <label>Organization (O)</label>
+          <input type="text" id="org" placeholder="My Company Ltd." />
+        </div>
+
+        <div class="form-group">
+          <label>Org. Unit (OU)</label>
+          <input type="text" id="ou" placeholder="IT Department" />
+        </div>
+
+        <div class="form-group">
+          <label>Country (C)</label>
+          <input type="text" id="country" placeholder="JP" maxlength="2" />
+        </div>
+
+        <div class="form-group">
+          <label>State / Province (ST)</label>
+          <input type="text" id="state" placeholder="Tokyo" />
+        </div>
+
+        <div class="form-group full">
+          <label>Locality (L)</label>
+          <input type="text" id="locality" placeholder="Shinjuku" />
+        </div>
+
+        <div class="form-group full">
+          <label>Email Address</label>
+          <input type="email" id="email" placeholder="admin@example.com" />
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="generateBtn" onclick="generate()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      鍵ペアと CSR を生成
+    </button>
+
+    <!-- Output -->
+    <div class="output-section" id="outputSection">
+      <div style="height:32px"></div>
+
+      <div class="warning">
+        <span class="warning-icon">⚠</span>
+        <span>秘密鍵は安全な場所に保存し、第三者と共有しないでください。このページを閉じると鍵は失われます。</span>
+      </div>
+
+      <div style="background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2); padding:12px 16px; font-family:var(--mono); font-size:11px; color:#6ee7b7; display:flex; gap:10px; align-items:flex-start; margin-bottom:20px; line-height:1.6;">
+        <span style="flex-shrink:0; font-size:14px;">🔒</span>
+        <span>すべての処理はブラウザ内（Web Crypto API）で完結しています。生成された鍵・CSRは外部サーバーに一切送信されません。</span>
+      </div>
+
+      <div class="card">
+        <div class="card-title">03 — 生成結果（秘密鍵 / CSR）</div>
+
+        <div class="output-block">
+          <div class="output-header">
+            <span class="output-label">🔑 Private Key (PKCS#8)</span>
+            <div class="output-actions">
+              <button class="btn btn-copy" onclick="copyText('privateKey', this)">COPY</button>
+              <button class="btn btn-download" onclick="downloadFile('privateKey', 'private.key')">↓ DL</button>
+            </div>
+          </div>
+          <textarea class="output-text" id="privateKey" readonly></textarea>
+        </div>
+
+        <div class="output-block">
+          <div class="output-header">
+            <span class="output-label">📋 CSR (PKCS#10)</span>
+            <div class="output-actions">
+              <button class="btn btn-copy" onclick="copyText('csrOutput', this)">COPY</button>
+              <button class="btn btn-download" onclick="downloadFile('csrOutput', 'request.csr')">↓ DL</button>
+            </div>
+          </div>
+
+          <div id="subjectDisplay" class="subject-display"></div>
+          <div style="height:12px"></div>
+          <textarea class="output-text" id="csrOutput" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── ASN.1 / DER utilities ─────────────────────────────────────────────────────
+    function encodeLength(len) {
+      if (len < 0x80) return [len];
+      const bytes = [];
+      let n = len;
+      while (n > 0) { bytes.unshift(n & 0xff); n >>= 8; }
+      return [0x80 | bytes.length, ...bytes];
+    }
+    function tlv(tag, content) {
+      const c = Array.isArray(content) ? content : [...new Uint8Array(content)];
+      return [tag, ...encodeLength(c.length), ...c];
+    }
+    function seq(...items) { return tlv(0x30, items.flat()); }
+    function set(...items) { return tlv(0x31, items.flat()); }
+    function oid(bytes) { return tlv(0x06, bytes); }
+    function utf8(str) {
+      const enc = new TextEncoder().encode(str);
+      return tlv(0x0c, Array.from(enc));
+    }
+    function printable(str) {
+      const enc = new TextEncoder().encode(str);
+      return tlv(0x13, Array.from(enc));
+    }
+    function ia5(str) {
+      const enc = new TextEncoder().encode(str);
+      return tlv(0x16, Array.from(enc));
+    }
+    function integer(bytes) { return tlv(0x02, bytes); }
+    function bitString(bytes) { return tlv(0x03, [0x00, ...Array.from(bytes)]); }
+
+    // OID byte sequences
+    const OID = {
+      CN: [0x55,0x04,0x03],
+      O:  [0x55,0x04,0x0a],
+      OU: [0x55,0x04,0x0b],
+      C:  [0x55,0x04,0x06],
+      ST: [0x55,0x04,0x08],
+      L:  [0x55,0x04,0x07],
+      emailAddress: [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x09,0x01],
+
+      rsaEncryption: [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01],
+      sha256WithRSA: [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0b],
+
+      ecPublicKey: [0x2a,0x86,0x48,0xce,0x3d,0x02,0x01],
+      ecdsaWithSHA256: [0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02],
+      ecdsaWithSHA384: [0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03],
+      ecdsaWithSHA512: [0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x04],
+    };
+
+    // Build RDN sequence from subject fields
+    function buildSubjectDER(fields) {
+      const rdns = [];
+      if (fields.cn) rdns.push(set(seq(oid(OID.CN), utf8(fields.cn))));
+      if (fields.org) rdns.push(set(seq(oid(OID.O), utf8(fields.org))));
+      if (fields.ou) rdns.push(set(seq(oid(OID.OU), utf8(fields.ou))));
+      if (fields.country) rdns.push(set(seq(oid(OID.C), printable(fields.country.toUpperCase()))));
+      if (fields.state) rdns.push(set(seq(oid(OID.ST), utf8(fields.state))));
+      if (fields.locality) rdns.push(set(seq(oid(OID.L), utf8(fields.locality))));
+      if (fields.email) rdns.push(set(seq(oid(OID.emailAddress), ia5(fields.email))));
+      return seq(...rdns);
+    }
+
+    function sha256AlgId() { return seq(oid(OID.sha256WithRSA), [0x05, 0x00]); }
+
+    function buildCertRequestInfo(subjectDER, spkiDER) {
+      const version = integer([0x00]);   // version 0
+      const attributes = tlv(0xa0, []);  // [0] IMPLICIT empty
+      return seq(version, subjectDER, spkiDER, attributes);
+    }
+
+    // Build full CSR DER
+    async function buildCSR(keyPair, fields, keyType, ecCurve) {
+      const subjectDER = buildSubjectDER(fields);
+
+      // CSRには公開鍵(SPKI)が必要（表示はしないが内部で使う）
+      const spkiBuffer = await crypto.subtle.exportKey("spki", keyPair.publicKey); // keep
+      const spkiBytes = new Uint8Array(spkiBuffer);
+
+      const certReqInfo = buildCertRequestInfo(subjectDER, Array.from(spkiBytes));
+      const certReqInfoBytes = new Uint8Array(certReqInfo);
+
+      let signature, sigAlgDER;
+      if (keyType === "EC") {
+        const hashMap = { "P-256": "SHA-256", "P-384": "SHA-384", "P-521": "SHA-512" };
+        const sigOidMap = {
+          "P-256": OID.ecdsaWithSHA256,
+          "P-384": OID.ecdsaWithSHA384,
+          "P-521": OID.ecdsaWithSHA512,
+        };
+
+        signature = await crypto.subtle.sign(
+          { name: "ECDSA", hash: hashMap[ecCurve] },
+          keyPair.privateKey,
+          certReqInfoBytes
+        );
+        sigAlgDER = seq(oid(sigOidMap[ecCurve])); // ECDSA: no NULL
+      } else {
+        signature = await crypto.subtle.sign(
+          { name: "RSASSA-PKCS1-v1_5" },
+          keyPair.privateKey,
+          certReqInfoBytes
+        );
+        sigAlgDER = sha256AlgId();
+      }
+
+      const signatureBytes = new Uint8Array(signature);
+      const csrDER = seq(certReqInfo, sigAlgDER, bitString(signatureBytes));
+      return new Uint8Array(csrDER);
+    }
+
+    // ── PEM helpers ───────────────────────────────────────────────────────────────
+    function toPEM(label, der) {
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+      const lines = b64.match(/.{1,64}/g).join("\n");
+      return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----`;
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────────
+    function onKeyTypeChange() {
+      const isEC = document.querySelector('input[name="keyType"]:checked').value === "EC";
+      document.getElementById("rsaOptions").style.display = isEC ? "none" : "";
+      document.getElementById("ecOptions").style.display = isEC ? "" : "none";
+    }
+
+    function updateCurveDesc() {
+      const curve = document.querySelector('input[name="ecCurve"]:checked').value;
+      const desc = {
+        "P-256": "P-256 — secp256r1 / 一般用途・TLS広く採用",
+        "P-384": "P-384 — secp384r1 / より高強度・政府・金融系",
+        "P-521": "P-521 — secp521r1 / 最高強度",
+      };
+      document.getElementById("curveDesc").textContent = desc[curve];
+    }
+
+    // ── Main generate function ────────────────────────────────────────────────────
+    async function generate() {
+      const cnEl = document.getElementById("cn");
+      const cn = cnEl.value.trim();
+      if (!cn) {
+        cnEl.focus();
+        cnEl.style.borderColor = "#ef4444";
+        setTimeout(() => (cnEl.style.borderColor = ""), 2000);
+        return;
+      }
+
+      const keyType = document.querySelector('input[name="keyType"]:checked').value;
+      const keySize = parseInt(document.querySelector('input[name="keySize"]:checked').value, 10);
+      const ecCurve = document.querySelector('input[name="ecCurve"]:checked')?.value || "P-256";
+
+      const btn = document.getElementById("generateBtn");
+      btn.disabled = true;
+      btn.classList.add("loading");
+
+      const label = keyType === "EC" ? `EC ${ecCurve}` : `RSA ${keySize}bit`;
+      btn.innerHTML = `<span>生成中... (${label})</span>`;
+
+      updateSteps(2);
+      setProgress(33);
+
+      const fields = {
+        cn,
+        org: document.getElementById("org").value.trim(),
+        ou: document.getElementById("ou").value.trim(),
+        country: document.getElementById("country").value.trim(),
+        state: document.getElementById("state").value.trim(),
+        locality: document.getElementById("locality").value.trim(),
+        email: document.getElementById("email").value.trim(),
+      };
+
+      try {
+        let keyPair;
+
+        if (keyType === "EC") {
+          keyPair = await crypto.subtle.generateKey(
+            { name: "ECDSA", namedCurve: ecCurve },
+            true,
+            ["sign", "verify"]
+          );
+        } else {
+          keyPair = await crypto.subtle.generateKey(
+            {
+              name: "RSASSA-PKCS1-v1_5",
+              modulusLength: keySize,
+              publicExponent: new Uint8Array([1, 0, 1]),
+              hash: "SHA-256",
+            },
+            true,
+            ["sign", "verify"]
+          );
+        }
+
+        setProgress(60);
+
+        // Export private key (PKCS#8)
+        const privDER = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+        const privPEM = toPEM("PRIVATE KEY", privDER);
+
+        // Build CSR (PKCS#10)
+        const csrDER = await buildCSR(keyPair, fields, keyType, ecCurve);
+        const csrPEM = toPEM("CERTIFICATE REQUEST", csrDER);
+
+        setProgress(100);
+        updateSteps(3);
+
+        // Display results (NO public key)
+        document.getElementById("privateKey").value = privPEM;
+        document.getElementById("csrOutput").value = csrPEM;
+
+        // Subject display
+        const parts = [];
+        parts.push(`<span>KeyType=</span>${keyType === "EC" ? "EC (" + ecCurve + ")" : "RSA " + keySize + "bit"}`);
+        if (fields.cn) parts.push(`<span>CN=</span>${fields.cn}`);
+        if (fields.org) parts.push(`<span>O=</span>${fields.org}`);
+        if (fields.ou) parts.push(`<span>OU=</span>${fields.ou}`);
+        if (fields.country) parts.push(`<span>C=</span>${fields.country.toUpperCase()}`);
+        if (fields.state) parts.push(`<span>ST=</span>${fields.state}`);
+        if (fields.locality) parts.push(`<span>L=</span>${fields.locality}`);
+        if (fields.email) parts.push(`<span>emailAddress=</span>${fields.email}`);
+
+        document.getElementById("subjectDisplay").innerHTML = parts.join("<br>");
+        document.getElementById("outputSection").classList.add("visible");
+        document.getElementById("outputSection").scrollIntoView({ behavior: "smooth" });
+      } catch (err) {
+        alert("エラー: " + (err?.message || String(err)));
+        setProgress(0);
+        updateSteps(1);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("loading");
+        btn.innerHTML =
+          `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">` +
+          `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> 再生成`;
+      }
+    }
+
+    function updateSteps(active) {
+      for (let i = 1; i <= 3; i++) {
+        const el = document.getElementById("step" + i);
+        el.className = "step" + (i < active ? " done" : i === active ? " active" : "");
+      }
+    }
+
+    function setProgress(pct) {
+      document.getElementById("progressFill").style.width = pct + "%";
+    }
+
+    async function copyText(id, btn) {
+      const text = document.getElementById(id).value;
+      await navigator.clipboard.writeText(text);
+      const orig = btn.textContent;
+      btn.textContent = "✓ COPIED";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 2000);
+    }
+
+    function downloadFile(id, filename) {
+      const text = document.getElementById(id).value;
+      const blob = new Blob([text], { type: "text/plain" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("cn").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") generate();
+      });
+      document.querySelectorAll('input[name="ecCurve"]').forEach((r) => {
+        r.addEventListener("change", updateCurveDesc);
+      });
+    });
+  </script>
+</body>
+</html>
