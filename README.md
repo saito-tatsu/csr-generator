@@ -6,6 +6,7 @@ A single-file, browser-only generator for RSA / EC private keys and PKCS#10 CSRs
 ## 特長 / Features
 - RSA 2048 / 4096 bit、EC P-256 / P-384 / P-521
 - 秘密鍵は PKCS#8 (PEM)、CSR は PKCS#10 (PEM)
+- Subject Alternative Name (SAN) 対応: DNS名(ワイルドカード・IDN は punycode 変換)、IPv4 / IPv6、メール。CN の自動追加も可
 - Web Crypto API を使用。サーバーへの送信はありません(CSP で外部通信も禁止)
 - 外部ライブラリ・外部フォント不使用。`index.html` 1枚で動作
 

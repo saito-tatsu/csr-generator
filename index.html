@@ -163,7 +163,7 @@
 
     label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
 
-    input[type="text"], input[type="email"] {
+    input[type="text"], input[type="email"], textarea.field {
       background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text);
@@ -175,9 +175,14 @@
       width: 100%;
       border-radius: 0;
     }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,229,255,0.08); }
-    input.invalid { border-color: var(--danger); }
-    input::placeholder { color: #64748b; }
+    textarea.field { resize: vertical; min-height: 84px; line-height: 1.6; }
+    input:focus, textarea.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,229,255,0.08); }
+    input.invalid, textarea.field.invalid { border-color: var(--danger); }
+    input::placeholder, textarea.field::placeholder { color: #64748b; }
+
+    .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px;
+             text-transform: none; letter-spacing: 0; cursor: pointer; }
+    .check input { width: auto; accent-color: var(--accent); }
 
     .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.7; }
 
@@ -375,6 +380,12 @@
           <label for="email">Email Address</label>
           <input type="email" id="email" placeholder="admin@example.com" />
         </div>
+        <div class="form-group full">
+          <label for="san">Subject Alternative Names (SAN)</label>
+          <textarea class="field" id="san" spellcheck="false" placeholder="www.example.com&#10;*.example.com&#10;192.0.2.10"></textarea>
+          <div class="hint">1行に1件(カンマ区切りも可)。DNS名 / IPv4 / IPv6 / メールを自動判定します。<code>DNS:</code> <code>IP:</code> <code>email:</code> の接頭辞でも指定できます。</div>
+          <label class="check"><input type="checkbox" id="sanIncludeCn" checked /> CN を SAN に自動追加する</label>
+        </div>
       </div>
     </div>
 
@@ -475,6 +486,8 @@
       CN: [0x55,0x04,0x03], O: [0x55,0x04,0x0a], OU: [0x55,0x04,0x0b],
       C:  [0x55,0x04,0x06], ST: [0x55,0x04,0x08], L: [0x55,0x04,0x07],
       emailAddress: [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x09,0x01],
+      extensionRequest: [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x09,0x0e],
+      subjectAltName: [0x55,0x1d,0x11],
       sha256WithRSA:   [0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0b],
       ecdsaWithSHA256: [0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02],
       ecdsaWithSHA384: [0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03],
@@ -511,6 +524,90 @@
       return DER.seq(...rdns);
     }
 
+    // ── Subject Alternative Name ──────────────────────────────────────────────
+    const SAN_TAG = { email: 0x81, dns: 0x82, ip: 0x87 }; // rfc822Name / dNSName / iPAddress
+
+    function parseIPv4(s) {
+      const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+      if (!m) return null;
+      const bytes = m.slice(1).map(Number);
+      return bytes.every((n) => n <= 255) ? Uint8Array.from(bytes) : null;
+    }
+
+    function parseIPv6(s) {
+      if (!/^[0-9a-fA-F:]+$/.test(s) || !s.includes(":")) return null;
+      const halves = s.split("::");
+      if (halves.length > 2) return null;
+      const toGroups = (part) => (part ? part.split(":") : []);
+      const head = toGroups(halves[0]);
+      const tail = halves.length === 2 ? toGroups(halves[1]) : [];
+      const missing = 8 - head.length - tail.length;
+      if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+      const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill("0"), ...tail];
+      if (groups.length !== 8 || !groups.every((g) => /^[0-9a-fA-F]{1,4}$/.test(g))) return null;
+      return Uint8Array.from(groups.flatMap((g) => [parseInt(g, 16) >> 8, parseInt(g, 16) & 0xff]));
+    }
+
+    // Non-ASCII labels → punycode (via the URL parser); returns null when not a valid DNS name.
+    function normalizeDnsName(name) {
+      const labels = name.replace(/\.$/, "").split(".").map((label) => {
+        if (/^[\x00-\x7f]*$/.test(label) || label === "") return label;
+        try { return new URL("http://" + label).hostname; } catch { return null; }
+      });
+      if (labels.includes(null)) return null;
+      const out = labels.join(".");
+      if (/^[\d.]+$/.test(out)) return null; // looks like an (invalid) IPv4 address, not a hostname
+      const valid = /^(\*\.)?[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?(\.[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)*$/;
+      return out.length <= 253 && valid.test(out) ? out : null;
+    }
+
+    // Free text (newline / comma / whitespace separated) → [{ type, value, der }], throws on bad input.
+    function parseSanInput(text, { cn = "", includeCn = false } = {}) {
+      const tokens = text.split(/[\s,;]+/).filter(Boolean);
+      if (includeCn && cn) tokens.unshift(cn);
+
+      const seen = new Set();
+      const entries = [];
+      for (const token of tokens) {
+        const prefixed = /^(dns|ip|email):(.*)$/i.exec(token);
+        let kind = prefixed ? prefixed[1].toLowerCase() : null;
+        const raw = prefixed ? prefixed[2] : token;
+
+        const ipBytes = parseIPv4(raw) || parseIPv6(raw);
+        if (!kind) kind = raw.includes("@") ? "email" : ipBytes ? "ip" : "dns";
+
+        let value, bytes;
+        if (kind === "ip") {
+          bytes = ipBytes;
+          if (!bytes) throw new Error(`IPアドレスが不正です: ${raw}`);
+          value = raw;
+        } else if (kind === "email") {
+          if (!/^[^\s@]+@[^\s@]+$/.test(raw)) throw new Error(`メールアドレスが不正です: ${raw}`);
+          value = raw;
+          bytes = new TextEncoder().encode(raw);
+        } else {
+          value = normalizeDnsName(raw);
+          if (!value) throw new Error(`DNS名が不正です: ${raw}`);
+          bytes = new TextEncoder().encode(value);
+        }
+
+        const key = kind + ":" + value.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push({ type: kind, value, der: tlv(SAN_TAG[kind], bytes) });
+      }
+      return entries;
+    }
+
+    // PKCS#10 attributes [0] { extensionRequest { Extensions { subjectAltName } } }; empty when no SANs.
+    function buildAttributes(sans) {
+      if (!sans.length) return tlv(0xa0);
+      const names = DER.seq(...sans.map((s) => s.der));
+      const extension = DER.seq(DER.oid(OID.subjectAltName), tlv(0x04, names)); // OCTET STRING
+      const extensions = DER.seq(extension);
+      return tlv(0xa0, DER.seq(DER.oid(OID.extensionRequest), DER.set(extensions)));
+    }
+
     // ── Key generation / CSR ──────────────────────────────────────────────────
     function generateKeyPair({ keyType, keySize, ecCurve }) {
       const params = keyType === "EC"
@@ -529,13 +626,13 @@
       return { algId: DER.seq(DER.oid(OID.sha256WithRSA), DER.null()), signature: sig };
     }
 
-    async function buildCSR(keyPair, fields, keyType, ecCurve) {
+    async function buildCSR(keyPair, fields, sans, keyType, ecCurve) {
       const spki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
       const info = DER.seq(
         DER.int(Uint8Array.of(0)),   // version v1
         buildSubjectDER(fields),
         spki,
-        tlv(0xa0)                    // attributes [0], empty
+        buildAttributes(sans)        // attributes [0]
       );
       const { algId, signature } = await signCertRequestInfo(keyPair, info, keyType, ecCurve);
       return DER.seq(info, algId, DER.bitString(signature));
@@ -548,10 +645,10 @@
       return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----`;
     }
 
-    async function createKeyAndCSR(opts, fields) {
+    async function createKeyAndCSR(opts, fields, sans = []) {
       const keyPair = await generateKeyPair(opts);
       const privDER = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
-      const csrDER = await buildCSR(keyPair, fields, opts.keyType, opts.ecCurve);
+      const csrDER = await buildCSR(keyPair, fields, sans, opts.keyType, opts.ecCurve);
       return { privatePEM: toPEM("PRIVATE KEY", privDER), csrPEM: toPEM("CERTIFICATE REQUEST", csrDER) };
     }
   </script>
@@ -600,7 +697,7 @@
       return null;
     }
 
-    function renderSubject(fields, keyDesc) {
+    function renderSubject(fields, sans, keyDesc) {
       const box = $("subjectDisplay");
       box.replaceChildren();
       const rows = [["KeyType", keyDesc]];
@@ -608,6 +705,7 @@
         const v = normalizedValue(f, fields);
         if (v) rows.push([f.label, v]);
       }
+      for (const s of sans) rows.push(["SAN " + s.type.toUpperCase(), s.value]);
       rows.forEach(([k, v], i) => {
         if (i) box.append(document.createElement("br"));
         const key = document.createElement("span");
@@ -642,6 +740,14 @@
       const invalid = validate(fields);
       if (invalid) return flagInvalid(invalid);
 
+      let sans;
+      try {
+        sans = parseSanInput($("san").value, { cn: fields.cn, includeCn: $("sanIncludeCn").checked });
+      } catch (err) {
+        flagInvalid($("san"));
+        return alert(err.message);
+      }
+
       const keyType = checkedValue("keyType");
       const opts = {
         keyType,
@@ -654,10 +760,10 @@
       setStage(2, 33);
 
       try {
-        const { privatePEM, csrPEM } = await createKeyAndCSR(opts, fields);
+        const { privatePEM, csrPEM } = await createKeyAndCSR(opts, fields, sans);
         $("privateKey").value = privatePEM;
         $("csrOutput").value = csrPEM;
-        renderSubject(fields, keyDesc);
+        renderSubject(fields, sans, keyDesc);
         $("outputSection").hidden = false;
         $("outputSection").scrollIntoView({ behavior: "smooth" });
         setStage(3, 100);
